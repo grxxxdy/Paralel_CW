@@ -9,6 +9,10 @@ class Program
         Console.WriteLine("\nTrying to connect to the server.");
         client.Connect("192.168.0.175", 5000);
         
+        // Make a search
+        client.SearchFiles("fdwewqfdasd");
+        
+        // Disconnect the client
         client.Disconnect();
 
         Console.ReadKey();

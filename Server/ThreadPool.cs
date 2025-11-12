@@ -12,6 +12,11 @@ public class ThreadPool : IDisposable
 
     private bool _shouldInterrupt;
     
+    // debug stuff-----------
+    public int tasksEnqueued = 0;
+    public int tasksExecuted = 0;
+    //-----------------------
+    
     public ThreadPool(int workerThreadCount, int queueCapacity)
     {
         _shouldInterrupt = false;
@@ -40,15 +45,18 @@ public class ThreadPool : IDisposable
 
         lock (_queueLock)       // lock queue
         {
-            if (_taskQueue.Count >= _queueCapacity)     // check if full
+            while (_taskQueue.Count >= _queueCapacity && !_shouldInterrupt)     // If full
             {
-                SafeConsoleWrite("[ThreadPool] Queue is full. Task discarded.");
-                return;
+                Monitor.Wait(_queueLock);
             }
             
-            _taskQueue.Enqueue(task);   // enqueue task
+            if (_shouldInterrupt)
+                return;
             
-            Monitor.Pulse(_queueLock);
+            _taskQueue.Enqueue(task);   // enqueue task
+            tasksEnqueued++;
+            
+            Monitor.PulseAll(_queueLock);
         }
     }
 
@@ -69,9 +77,13 @@ public class ThreadPool : IDisposable
                     return;
                 
                 taskToDo = _taskQueue.Dequeue();    // dequeue task
+                Monitor.PulseAll(_queueLock);
             }
             
             taskToDo.Invoke();      // start task
+            
+            Interlocked.Increment(ref tasksExecuted);
+            // SafeConsoleWrite($"[ThreadPool] Executed {tasksExecuted} tasks");
         }
             
     }

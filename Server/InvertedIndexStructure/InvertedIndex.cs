@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace Server.InvertedIndexStructure;
 
@@ -13,18 +14,17 @@ public class InvertedIndex : IDisposable
     private bool _isSchedulerRunning = false;
     private Thread? _schedulerThread;
 
-    public InvertedIndex(int threadCount, int queueCapacity, int updatesMonitorInverval)
+    public InvertedIndex(int threadCount, int queueCapacity)
     {
         _index = new ConcurrentDictionary<string, HashSet<string>>();
-        _dataDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
+        _dataDirectory = "../../../InvertedIndexStructure/Data";
         _threadPool = new ThreadPool(threadCount, queueCapacity);
-        
-        if(updatesMonitorInverval > 0)
-            StartScheduler(updatesMonitorInverval);
     }
 
     public void BuildIndex()
     {
+        var stopwatch = Stopwatch.StartNew();
+        
         var files = Directory.GetFiles(_dataDirectory, "*.txt", SearchOption.AllDirectories);
         Console.WriteLine($"[InvertedIndex] Found {files.Length} files.");
 
@@ -47,12 +47,18 @@ public class InvertedIndex : IDisposable
         }
 
         Console.WriteLine("[InvertedIndex] Index built successfully.");
+        Console.WriteLine($"[InvertedIndex] Total files processed: {files.Length}");
+        Console.WriteLine($"[InvertedIndex] Tasks enqueued: {_threadPool.tasksEnqueued}");
+        Console.WriteLine($"[InvertedIndex] Tasks executed: {_threadPool.tasksExecuted}");
+        Console.WriteLine($"[InvertedIndex] Build time: {stopwatch.ElapsedMilliseconds / 1000.0} s");
     }
 
     private void ProcessFile(string filePath)
     {
         try
         {
+            var fileName = Path.GetFileName(filePath);
+            
             var content = File.ReadAllText(filePath);
             var words = content
                 .ToLower()
@@ -63,10 +69,10 @@ public class InvertedIndex : IDisposable
             {
                 _index.AddOrUpdate(
                     word,
-                    _ => new HashSet<string> { filePath },
+                    _ => new HashSet<string> { fileName },
                     (_, set) =>
                     {
-                        lock (set) set.Add(filePath);
+                        lock (set) set.Add(fileName);
                         return set;
                     });
             }
@@ -94,7 +100,7 @@ public class InvertedIndex : IDisposable
         return new List<string>();
     }
 
-    private void StartScheduler(int intervalSeconds)
+    public void StartScheduler(int intervalSeconds)
     {
         if (_isSchedulerRunning) return;
 
@@ -152,6 +158,7 @@ public class InvertedIndex : IDisposable
 
     public void Dispose()
     {
+        StopScheduler();
         _threadPool.Dispose();
     }
 }

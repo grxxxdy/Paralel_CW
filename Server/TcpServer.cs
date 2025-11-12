@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using Server.InvertedIndexStructure;
 using Server.TcpMessages;
 
 namespace Server;
@@ -8,7 +9,12 @@ namespace Server;
 public class TcpServer : IDisposable
 {
     private Socket? _socket;
+    private InvertedIndex _invertedIndex;
 
+    public TcpServer(InvertedIndex invertedIndex)
+    {
+        _invertedIndex = invertedIndex;
+    }
     public void StartTcp(int port)
     {
         string ip = GetLocalIpAddress();
@@ -21,7 +27,7 @@ public class TcpServer : IDisposable
         _socket.Bind(tcpEndpoint);
         _socket.Listen(10);
         
-        Console.WriteLine($"\nServer running on {ip}:{port}.");
+        Console.WriteLine($"\n[Server] Server running on {ip}:{port}.");
         
         // accept connections
         while (true)
@@ -39,12 +45,11 @@ public class TcpServer : IDisposable
         {
             using NetworkStream stream = new NetworkStream(clientSocket);
             long clientId = clientSocket.Handle.ToInt64();
-            Task<List<List<int>>?>? res = null;
 
             while (true)
             {
                 var (type, payload) = MessageManager.ReadMessage(stream);
-                Console.WriteLine($"\nReceived a message of type {type} from client {clientId}: {payload}");
+                Console.WriteLine($"\n[Server] Received a message of type {type} from client {clientId}: {payload}");
 
                 MessageType typeToSend = MessageType.UNKNOWN;
                 string payloadToSend = "";
@@ -53,24 +58,31 @@ public class TcpServer : IDisposable
                 {
                     case MessageType.CONNECT:
                         typeToSend = MessageType.CONNECT;
-                        payloadToSend = "Connected successfully!";
+                        payloadToSend = "[Server] Connected successfully!";
                         break;
                     case MessageType.DISCONNECT:
                         // Do some stuff with client data here 
                         clientSocket.Shutdown(SocketShutdown.Both);
                         clientSocket.Close();
                         return;
+                    case MessageType.SEARCHFILES:
+                        string word = payload;
+                        List<string> searchResults = _invertedIndex.Search(word);
+                        payloadToSend = searchResults.Count > 0 ? string.Join("\n", searchResults) : string.Empty;
+                        typeToSend = MessageType.SEARCHFILES;
+                        break;
                 }
                 
                 MessageManager.SendMessage(stream, typeToSend, payloadToSend);
-                Console.WriteLine($"Sent a message of type {typeToSend} to client {clientId}: \"{payloadToSend}\"");
+                Console.WriteLine($"[Server] Sent a message of type {typeToSend} to client {clientId}.");
+                //Console.WriteLine($"[Server] Sent a message of type {typeToSend} to client {clientId}: \"{payloadToSend}\"");
             }
         }
         catch (Exception ex)
         {
             clientSocket.Shutdown(SocketShutdown.Both);
             clientSocket.Close();
-            Console.WriteLine($"Server error: {ex.Message}");
+            Console.WriteLine($"[Server] Server error: {ex.Message}");
         }
     }
     

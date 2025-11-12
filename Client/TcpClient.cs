@@ -35,6 +35,44 @@ public class TcpClient : IDisposable
         MessageManager.SendMessage(stream, MessageType.DISCONNECT, "");
     }
 
+    public void SearchFiles(string word)
+    {
+        try
+        {
+            using NetworkStream stream = new NetworkStream(_socket, ownsSocket: false);
+            
+            // Відправляємо запит
+            MessageManager.SendMessage(stream, MessageType.SEARCHFILES, word);
+            Console.WriteLine($"[Client] Sent search request for word: \"{word}\"");
+            
+            // Отримуємо відповідь
+            var (responseType, responsePayload) = MessageManager.ReadMessage(stream);
+            
+            // Перевіряємо тип відповіді
+            if (responseType == MessageType.SEARCHFILES)
+            {
+                // Якщо немає збігів
+                if (string.IsNullOrWhiteSpace(responsePayload))
+                    Console.WriteLine("[Client] No files found for this word.\n");
+                else
+                {
+                    var files = responsePayload.Split(';', StringSplitOptions.RemoveEmptyEntries);
+                    Console.WriteLine($"[Client] Files containing \"{word}\":");
+                    foreach (var file in files)
+                        Console.WriteLine($"  - {file}");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"[Client] Unexpected response type: {responseType}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Client] Search failed: {ex.Message}");
+        }
+    }
+
     public void Dispose()
     {
         _socket?.Shutdown(SocketShutdown.Both);
