@@ -20,8 +20,13 @@ public class TcpClient : IDisposable
         MessageManager.SendMessage(stream, MessageType.CONNECT, "Hello from client");
         
         // Read response
-        var (type, payload) = MessageManager.ReadMessage(stream);
-        Console.WriteLine($"Server response of type \"{type}\": {payload}\n");
+        MessageType type = MessageType.UNKNOWN;
+        string payload = "";
+        while (type != MessageType.CONNECT)
+        {
+            (type, payload) = MessageManager.ReadMessage(stream);
+            Console.WriteLine($"Server response of type \"{type}\": {payload}\n");
+        }
     }
     
     public void Disconnect()
@@ -41,22 +46,21 @@ public class TcpClient : IDisposable
         {
             using NetworkStream stream = new NetworkStream(_socket, ownsSocket: false);
             
-            // Відправляємо запит
+            // Send message
             MessageManager.SendMessage(stream, MessageType.SEARCHFILES, word);
             Console.WriteLine($"[Client] Sent search request for word: \"{word}\"");
             
-            // Отримуємо відповідь
+            // Get response
             var (responseType, responsePayload) = MessageManager.ReadMessage(stream);
             
-            // Перевіряємо тип відповіді
+            // Check response
             if (responseType == MessageType.SEARCHFILES)
             {
-                // Якщо немає збігів
                 if (string.IsNullOrWhiteSpace(responsePayload))
                     Console.WriteLine("[Client] No files found for this word.\n");
                 else
                 {
-                    var files = responsePayload.Split(';', StringSplitOptions.RemoveEmptyEntries);
+                    var files = responsePayload.Split('\n', StringSplitOptions.RemoveEmptyEntries);
                     Console.WriteLine($"[Client] Files containing \"{word}\":");
                     foreach (var file in files)
                         Console.WriteLine($"  - {file}");

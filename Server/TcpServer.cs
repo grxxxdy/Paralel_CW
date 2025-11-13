@@ -11,9 +11,14 @@ public class TcpServer : IDisposable
     private Socket? _socket;
     private InvertedIndex _invertedIndex;
 
-    public TcpServer(InvertedIndex invertedIndex)
+    private ThreadPool _threadPool;
+    
+    private int _connectedClients = 0;
+
+    public TcpServer(InvertedIndex invertedIndex, ThreadPool threadPool)
     {
         _invertedIndex = invertedIndex;
+        _threadPool = threadPool;
     }
     public void StartTcp(int port)
     {
@@ -34,8 +39,15 @@ public class TcpServer : IDisposable
         {
             var client = _socket.Accept();
             
-            Thread clientThread = new Thread(() => HandleClient(client));
-            clientThread.Start();
+            int now = Interlocked.Increment(ref _connectedClients);
+            Console.WriteLine($"[Server] Client connected. Total clients: {now}");
+
+            using (var preStream = new NetworkStream(client, ownsSocket: false))
+            {
+                MessageManager.SendMessage(preStream, MessageType.WELCOME,"[Server] You've been added to the queue. Please await.");
+            }
+            
+            _threadPool.EnqueueTask(() => HandleClient(client));
         }
     }
 
@@ -43,7 +55,7 @@ public class TcpServer : IDisposable
     {
         try
         {
-            using NetworkStream stream = new NetworkStream(clientSocket);
+            using NetworkStream stream = new NetworkStream(clientSocket, ownsSocket: false);
             long clientId = clientSocket.Handle.ToInt64();
 
             while (true)
@@ -53,7 +65,7 @@ public class TcpServer : IDisposable
 
                 MessageType typeToSend = MessageType.UNKNOWN;
                 string payloadToSend = "";
-                
+
                 switch (type)
                 {
                     case MessageType.CONNECT:
@@ -61,9 +73,7 @@ public class TcpServer : IDisposable
                         payloadToSend = "[Server] Connected successfully!";
                         break;
                     case MessageType.DISCONNECT:
-                        // Do some stuff with client data here 
-                        clientSocket.Shutdown(SocketShutdown.Both);
-                        clientSocket.Close();
+                        Console.WriteLine($"[Server] Client {clientId} requested disconnect.");
                         return;
                     case MessageType.SEARCHFILES:
                         string word = payload;
@@ -72,7 +82,7 @@ public class TcpServer : IDisposable
                         typeToSend = MessageType.SEARCHFILES;
                         break;
                 }
-                
+
                 MessageManager.SendMessage(stream, typeToSend, payloadToSend);
                 Console.WriteLine($"[Server] Sent a message of type {typeToSend} to client {clientId}.");
                 //Console.WriteLine($"[Server] Sent a message of type {typeToSend} to client {clientId}: \"{payloadToSend}\"");
@@ -80,9 +90,16 @@ public class TcpServer : IDisposable
         }
         catch (Exception ex)
         {
-            clientSocket.Shutdown(SocketShutdown.Both);
-            clientSocket.Close();
             Console.WriteLine($"[Server] Server error: {ex.Message}");
+        }
+        finally
+        {
+            try { clientSocket.Shutdown(SocketShutdown.Both); } catch { }
+            try { clientSocket.Close(); } catch { }
+            try { clientSocket.Dispose(); } catch { }
+            
+            int now = Interlocked.Decrement(ref _connectedClients);
+            Console.WriteLine($"[Server] Client disconnected. Total clients: {now}");
         }
     }
     

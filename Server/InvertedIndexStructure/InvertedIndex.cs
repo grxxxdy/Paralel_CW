@@ -5,7 +5,8 @@ namespace Server.InvertedIndexStructure;
 
 public class InvertedIndex : IDisposable
 {
-    private ConcurrentDictionary<string, HashSet<string>> _index;
+    private ConcurrentDictionary<string, HashSet<string>> _index;       // inverted index 
+    private ConcurrentDictionary<string, DateTime> _fileProcessedTimes = new();     // when were files last changed
     private string _dataDirectory;
     private ThreadPool _threadPool;
     private object _taskLock = new object();
@@ -13,12 +14,17 @@ public class InvertedIndex : IDisposable
     private HashSet<string> _indexedFiles = new HashSet<string>();
     private bool _isSchedulerRunning = false;
     private Thread? _schedulerThread;
+    
+    // quick lauch option for debug
+    // -1 - no limits, anuthing >0 — sets the amount of files to index
+    private readonly int _maxFilesToIndex;
 
-    public InvertedIndex(int threadCount, int queueCapacity)
+    public InvertedIndex(ThreadPool threadPool, int maxFilesToIndex = -1)
     {
         _index = new ConcurrentDictionary<string, HashSet<string>>();
         _dataDirectory = "../../../InvertedIndexStructure/Data";
-        _threadPool = new ThreadPool(threadCount, queueCapacity);
+        _threadPool = threadPool;
+        _maxFilesToIndex = maxFilesToIndex;
     }
 
     public void BuildIndex()
@@ -27,6 +33,12 @@ public class InvertedIndex : IDisposable
         
         var files = Directory.GetFiles(_dataDirectory, "*.txt", SearchOption.AllDirectories);
         Console.WriteLine($"[InvertedIndex] Found {files.Length} files.");
+        
+        if (_maxFilesToIndex > 0 && files.Length > _maxFilesToIndex)
+        {
+            Console.WriteLine($"[InvertedIndex] Found {files.Length} files. Going to index {_maxFilesToIndex} of them.");
+            files = files.Take(_maxFilesToIndex).ToArray();
+        }
 
         _pendingTasks = files.Length;
 
@@ -76,6 +88,9 @@ public class InvertedIndex : IDisposable
                         return set;
                     });
             }
+            
+            // Save last time the file was processed
+            _fileProcessedTimes[fileName] = File.GetLastWriteTimeUtc(filePath);
         }
         catch (Exception ex)
         {
@@ -116,22 +131,39 @@ public class InvertedIndex : IDisposable
 
                     foreach (var file in files)
                     {
+                        var fileName = Path.GetFileName(file);
+                        var currentWrite = File.GetLastWriteTimeUtc(file);      // time when file was last edited
+                        
+                        // Check if the file is new
+                        bool isNew;
                         lock (_indexedFiles)
                         {
-                            if (_indexedFiles.Contains(file))
-                                continue;
-                            _indexedFiles.Add(file);
+                            isNew = !_indexedFiles.Contains(file);
+                            if (isNew) _indexedFiles.Add(file);
                         }
-
-                        Console.WriteLine($"[Scheduler] New file detected: {file}");
-
-                        lock (_taskLock)
+                        
+                        // if new, add it to index
+                        if (isNew)
                         {
-                            _pendingTasks++;
+                            Console.WriteLine($"[Scheduler] New file detected: {file}");
+                            lock (_taskLock) { _pendingTasks++; }
+                            var pathNew = file;
+                            _threadPool.EnqueueTask(() => ProcessFile(pathNew));
+                            continue;
                         }
 
-                        var path = file;
-                        _threadPool.EnqueueTask(() => ProcessFile(path));
+                        // if edited                                     
+                        var lastProcessed = _fileProcessedTimes.GetOrAdd(fileName, currentWrite);
+                        
+                        if (currentWrite > lastProcessed)
+                        {
+                            Console.WriteLine($"[Scheduler] Changed file detected: {file}");   
+                            _fileProcessedTimes[fileName] = currentWrite;
+                            
+                            lock (_taskLock) { _pendingTasks++; }                                   
+                            var pathChanged = file;                                                 
+                            _threadPool.EnqueueTask(() => ProcessFile(pathChanged));                
+                        }
                     }
                 }
                 catch (Exception ex)

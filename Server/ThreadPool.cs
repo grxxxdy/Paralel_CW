@@ -4,7 +4,7 @@ public class ThreadPool : IDisposable
 {
     private Queue<Action> _taskQueue;
     private List<Thread> _workers;
-
+    
     private object _queueLock = new object();
     private Mutex _consoleMutex;
 
@@ -31,7 +31,8 @@ public class ThreadPool : IDisposable
             int threadId = i;
             var worker = new Thread(() => WorkerLoop())
             {
-                Name = $"Worker-{threadId}"
+                Name = $"Worker-{threadId}",
+                IsBackground = true
             };
             
             _workers.Add(worker);
@@ -64,7 +65,7 @@ public class ThreadPool : IDisposable
     {
         while (!_shouldInterrupt)
         {
-            Action taskToDo = null;
+            Action? taskToDo = null;
             
             lock (_queueLock)       // lock queue
             {
@@ -80,10 +81,16 @@ public class ThreadPool : IDisposable
                 Monitor.PulseAll(_queueLock);
             }
             
-            taskToDo.Invoke();      // start task
-            
-            Interlocked.Increment(ref tasksExecuted);
-            // SafeConsoleWrite($"[ThreadPool] Executed {tasksExecuted} tasks");
+            try
+            {
+                taskToDo?.Invoke();      // start task
+                Interlocked.Increment(ref tasksExecuted);
+                // SafeConsoleWrite($"[ThreadPool] Executed {tasksExecuted} tasks");
+            }
+            catch (Exception ex)
+            {
+                SafeConsoleWrite($"[ThreadPool] Task error: {ex.Message}");
+            }
         }
             
     }
