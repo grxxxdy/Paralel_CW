@@ -1,5 +1,4 @@
 import socket
-import sys
 from enum import Enum
 
 class MessageType(Enum):
