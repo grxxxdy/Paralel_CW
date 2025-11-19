@@ -14,11 +14,14 @@ public class TcpServer : IDisposable
     private ThreadPool _threadPool;
     
     private int _connectedClients = 0;
+    
+    private Mutex _consoleMutex;
 
     public TcpServer(InvertedIndex invertedIndex, ThreadPool threadPool)
     {
         _invertedIndex = invertedIndex;
         _threadPool = threadPool;
+        _consoleMutex = new Mutex();
     }
     public void StartTcp(int port)
     {
@@ -30,22 +33,27 @@ public class TcpServer : IDisposable
         
         // socket bining
         _socket.Bind(tcpEndpoint);
-        _socket.Listen(10);
+        _socket.Listen(10000);
         
         Console.WriteLine($"\n[Server] Server running on {ip}:{port}.");
         
         // accept connections
         while (true)
         {
-            var client = _socket.Accept();
-            
-            int now = Interlocked.Increment(ref _connectedClients);
-            Console.WriteLine($"[Server] Client connected. Total clients: {now}");
-
-            using (var preStream = new NetworkStream(client, ownsSocket: false))
+            Socket client;
+            try
             {
-                MessageManager.SendMessage(preStream, MessageType.WELCOME,"[Server] You've been added to the queue. Please await.");
+                client = _socket.Accept();
             }
+            catch (Exception ex)
+            {
+                SafeConsoleWrite($"[Server] Accept error: {ex.Message}");
+                continue;
+            }
+
+            int now = Interlocked.Increment(ref _connectedClients);
+            // To make things quicker
+            //SafeConsoleWrite($"\n[Server] Client connected. Total clients: {now}");
             
             _threadPool.EnqueueTask(() => HandleClient(client));
         }
@@ -57,11 +65,22 @@ public class TcpServer : IDisposable
         {
             using NetworkStream stream = new NetworkStream(clientSocket, ownsSocket: false);
             long clientId = clientSocket.Handle.ToInt64();
-
+            
+            try
+            {
+                MessageManager.SendMessage(stream, MessageType.WELCOME,
+                    "[Server] You've been added to the queue. Please await.");
+            }
+            catch
+            {
+                SafeConsoleWrite($"[Server] Client {clientId} disconnected before WELCOME.");
+                return;
+            }
+            
             while (true)
             {
                 var (type, payload) = MessageManager.ReadMessage(stream);
-                Console.WriteLine($"\n[Server] Received a message of type {type} from client {clientId}: {payload}");
+                SafeConsoleWrite($"[Server] Received a message of type {type} from client {clientId}: {payload}");
 
                 MessageType typeToSend = MessageType.UNKNOWN;
                 string payloadToSend = "";
@@ -73,7 +92,7 @@ public class TcpServer : IDisposable
                         payloadToSend = "[Server] Connected successfully!";
                         break;
                     case MessageType.DISCONNECT:
-                        Console.WriteLine($"[Server] Client {clientId} requested disconnect.");
+                        SafeConsoleWrite($"[Server] Client {clientId} requested disconnect.");
                         return;
                     case MessageType.SEARCHFILES:
                         string word = payload;
@@ -84,13 +103,13 @@ public class TcpServer : IDisposable
                 }
 
                 MessageManager.SendMessage(stream, typeToSend, payloadToSend);
-                Console.WriteLine($"[Server] Sent a message of type {typeToSend} to client {clientId}.");
+                SafeConsoleWrite($"[Server] Sent a message of type {typeToSend} to client {clientId}.");
                 //Console.WriteLine($"[Server] Sent a message of type {typeToSend} to client {clientId}: \"{payloadToSend}\"");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Server] Server error: {ex.Message}");
+            SafeConsoleWrite($"[Server] Server error: {ex.Message}");
         }
         finally
         {
@@ -99,7 +118,7 @@ public class TcpServer : IDisposable
             try { clientSocket.Dispose(); } catch { }
             
             int now = Interlocked.Decrement(ref _connectedClients);
-            Console.WriteLine($"[Server] Client disconnected. Total clients: {now}");
+            SafeConsoleWrite($"[Server] Client disconnected. Total clients: {now}");
         }
     }
     
@@ -126,6 +145,13 @@ public class TcpServer : IDisposable
         }
 
         throw new Exception("No active network adapters with a valid IPv4 address found!");
+    }
+    
+    private void SafeConsoleWrite(string message)
+    {
+        _consoleMutex.WaitOne();
+        Console.WriteLine(message);
+        _consoleMutex.ReleaseMutex();
     }
     
     public void Dispose()

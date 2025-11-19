@@ -64,6 +64,7 @@ public class TcpClient : IDisposable
                     Console.WriteLine($"[Client] Files containing \"{word}\":");
                     foreach (var file in files)
                         Console.WriteLine($"  - {file}");
+                    Console.WriteLine("\n");
                 }
             }
             else
